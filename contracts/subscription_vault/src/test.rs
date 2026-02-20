@@ -122,6 +122,7 @@ fn test_get_allowed_transitions() {
 
 fn setup_test_env() -> (Env, SubscriptionVaultClient<'static>, Address, Address) {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(SubscriptionVault, ());
     let client = SubscriptionVaultClient::new(&env, &contract_id);
     
@@ -183,18 +184,18 @@ fn test_pause_subscription_from_cancelled_should_fail() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #400)")]
-fn test_pause_subscription_from_paused_should_fail() {
+fn test_pause_subscription_from_paused_is_idempotent() {
+    // Idempotent transition: Paused -> Paused should succeed (no-op)
     let (env, client, _, _) = setup_test_env();
     let (id, subscriber, _) = create_test_subscription(&env, &client, SubscriptionStatus::Active);
     
     // First pause
     client.pause_subscription(&id, &subscriber);
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Paused);
     
-    // Then try to pause again (should fail - idempotent but not a valid transition target)
-    // Actually idempotent transitions are allowed, so this should pass...
-    // Let me check the logic - Paused -> Paused should be allowed as idempotent
+    // Pausing again should succeed (idempotent)
     client.pause_subscription(&id, &subscriber);
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Paused);
 }
 
 #[test]
@@ -225,16 +226,18 @@ fn test_cancel_subscription_from_paused() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #400)")]
-fn test_cancel_subscription_from_cancelled_should_fail() {
+fn test_cancel_subscription_from_cancelled_is_idempotent() {
+    // Idempotent transition: Cancelled -> Cancelled should succeed (no-op)
     let (env, client, _, _) = setup_test_env();
     let (id, subscriber, _) = create_test_subscription(&env, &client, SubscriptionStatus::Active);
     
     // First cancel
     client.cancel_subscription(&id, &subscriber);
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Cancelled);
     
-    // Try to cancel again (should fail)
+    // Cancelling again should succeed (idempotent)
     client.cancel_subscription(&id, &subscriber);
+    assert_eq!(client.get_subscription(&id).status, SubscriptionStatus::Cancelled);
 }
 
 #[test]
@@ -416,25 +419,6 @@ fn test_invalid_cancelled_to_active() {
     
     client.cancel_subscription(&id, &subscriber);
     client.resume_subscription(&id, &subscriber);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #400)")]
-fn test_invalid_paused_to_insufficient_balance() {
-    let (env, client, _, _) = setup_test_env();
-    let (id, subscriber, _) = create_test_subscription(&env, &client, SubscriptionStatus::Active);
-    
-    // Manually set to paused
-    let mut sub = client.get_subscription(&id);
-    sub.status = SubscriptionStatus::Paused;
-    env.as_contract(&client.address, || {
-        env.storage().instance().set(&id, &sub);
-    });
-    
-    // Try to set to InsufficientBalance via resume (which is wrong but tests the validation)
-    // Actually, we can't do this via the API since there's no direct set_status
-    // The charge_subscription would need to fail, but we can't trigger that easily
-    // Skip this test - covered by helper tests
 }
 
 #[test]
