@@ -155,6 +155,7 @@ Emitted when a merchant withdraws accumulated funds.
 **Fields:**
 - `merchant` (Address): Merchant withdrawing funds
 - `amount` (i128): Amount withdrawn (in token base units)
+- `remaining_balance` (i128): Merchant's accumulated balance remaining after withdrawal
 
 **Indexing Strategy:**
 - Index by `merchant` to track withdrawal history

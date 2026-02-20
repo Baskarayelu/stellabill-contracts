@@ -7,6 +7,7 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_sh
 pub enum Error {
     NotFound = 404,
     Unauthorized = 401,
+    InsufficientFunds = 402,
 }
 
 #[contracttype]
@@ -80,6 +81,7 @@ pub struct SubscriptionCancelledEvent {
 pub struct MerchantWithdrawalEvent {
     pub merchant: Address,
     pub amount: i128,
+    pub remaining_balance: i128,
 }
 
 #[contracttype]
@@ -183,10 +185,18 @@ impl SubscriptionVault {
             .get(&subscription_id)
             .ok_or(Error::NotFound)?;
         
-        // TODO: transfer to merchant, check balance
+        // Check sufficient balance
+        if sub.prepaid_balance < sub.amount {
+            return Err(Error::InsufficientFunds);
+        }
         sub.prepaid_balance -= sub.amount;
         sub.last_payment_timestamp = env.ledger().timestamp();
         env.storage().instance().set(&subscription_id, &sub);
+        
+        // Accumulate merchant balance
+        let m_key = (Symbol::new(&env, "m_bal"), sub.merchant.clone());
+        let m_bal: i128 = env.storage().instance().get(&m_key).unwrap_or(0);
+        env.storage().instance().set(&m_key, &(m_bal + sub.amount));
         
         env.events().publish(
             (symbol_short!("charged"),),
@@ -289,13 +299,24 @@ impl SubscriptionVault {
         amount: i128,
     ) -> Result<(), Error> {
         merchant.require_auth();
-        // TODO: deduct from merchant's balance in contract, transfer token to merchant
+        
+        // Validate and deduct from merchant's accumulated balance
+        let m_key = (Symbol::new(&env, "m_bal"), merchant.clone());
+        let m_bal: i128 = env.storage().instance().get(&m_key).unwrap_or(0);
+        if m_bal < amount {
+            return Err(Error::InsufficientFunds);
+        }
+        let new_balance = m_bal - amount;
+        env.storage().instance().set(&m_key, &new_balance);
+        
+        // TODO: transfer token to merchant address
         
         env.events().publish(
             (symbol_short!("withdraw"),),
             MerchantWithdrawalEvent {
                 merchant,
                 amount,
+                remaining_balance: new_balance,
             },
         );
         
